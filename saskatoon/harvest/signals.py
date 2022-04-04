@@ -2,6 +2,8 @@ from crequest.middleware import CrequestMiddleware
 from django.core.mail import send_mail
 from django.core.cache import cache
 from saskatoon.settings import SEND_MAIL_FAIL_SILENTLY
+from django.utils.translation import gettext_lazy as _
+import warnings
 
 def clear_cache_property(sender, instance, **kwargs):
     cache.delete_pattern("*property*")
@@ -36,6 +38,39 @@ def changed_by(sender, instance, **kwargs):
             instance.changed_by = current_request.user
     else:
         instance.changed_by = None
+
+def notify_pending_status_update(sender, instance, **kwargs):
+    # Send email only if pending status is removed
+    if instance.id:
+        original_instance = sender.objects.get(id=instance.id)
+        if original_instance.pending and not instance.pending:
+            property_owner_email = list()
+            if instance.owner:
+                contact_person = instance.owner.get_person()
+                if not contact_person:
+                    contact_person = (
+                        instance.owner.get_organization().contact_person
+                    ) 
+                property_owner_name = instance.owner.__str__()
+                contact_email = contact_person.email()
+            else:
+                property_owner_name = instance.pending_contact_name
+                contact_email = instance.pending_contact_email
+            if not property_owner_name or not len(property_owner_name):
+                 warnings.warn("Property does not have an owner")
+                 return
+            if not contact_email or not len(contact_email):
+                warnings.warn("Tree Owner contact email information is missing")
+                return
+            property_owner_email.append(contact_email)
+            mail_subject = _("Property Validation Completed")
+            message = (_("Hi") + " " + property_owner_name + ",\n\n" +
+                    _("Your tree subscription has been validated by " +
+                    "a member of Les Fruits Défendus. ") + _("A pick " +
+                    "leader might contact you to plan a harvest this " +
+                    "season.") + "\n\n" + _("Thanks for supporting " +
+                    "your community!"))
+            _send_mail(mail_subject, message, property_owner_email)
 
 def comment_send_mail(sender, instance, **kwargs):
     current_request = CrequestMiddleware.get_request()
